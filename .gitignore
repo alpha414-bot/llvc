@@ -2,3 +2,9 @@
 *__pycache__*
 f_8312_ls360/*
 LibriSpeech/*
+
+converted_out_samarix*
+
+chat.json
+llvc_models/
+converted_wavs/

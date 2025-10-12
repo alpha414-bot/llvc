@@ -1,3 +1,6 @@
+import sys, os
+
+sys.path.append(os.path.dirname(__file__))
 from model import Net
 import torch
 import torchaudio
@@ -8,15 +11,16 @@ import json
 import os
 from utils import glob_audio_files
 from tqdm import tqdm
+import soundfile as sf
+import io
 
 
 def load_model(checkpoint_path, config_path):
     with open(config_path) as f:
         config = json.load(f)
-    model = Net(**config['model_params'])
-    model.load_state_dict(torch.load(
-        checkpoint_path, map_location="cpu")['model'])
-    return model, config['data']['sr']
+    model = Net(**config["model_params"])
+    model.load_state_dict(torch.load(checkpoint_path, map_location="cpu")["model"])
+    return model, config["data"]["sr"]
 
 
 def load_audio(audio_path, sample_rate):
@@ -24,6 +28,46 @@ def load_audio(audio_path, sample_rate):
     audio = audio.mean(0, keepdim=False)
     audio = torchaudio.transforms.Resample(sr, sample_rate)(audio)
     return audio
+
+
+def load_audio_full(source, sample_rate):
+    """
+    Load audio from a file path, bytes/bytearray, or file-like object.
+    Returns a mono 1D float32 torch.Tensor sampled at sample_rate.
+    """
+    # read into numpy + sample rate for bytes/file-like, otherwise use torchaudio for paths
+    if isinstance(source, (bytes, bytearray)):
+        # data, sr = sf.read(io.BytesIO(source), dtype="float32")
+        data, sr = sf.read(io.BytesIO(source))
+        # soundfile returns (frames,) or (frames, channels)
+        if data.ndim == 1:
+            waveform = torch.from_numpy(data).unsqueeze(0)  # [1, frames]
+        else:
+            waveform = torch.from_numpy(data.T)  # [channels, frames]
+    elif hasattr(source, "read"):
+        data, sr = sf.read(source, dtype="float32")
+        if data.ndim == 1:
+            waveform = torch.from_numpy(data).unsqueeze(0)
+        else:
+            waveform = torch.from_numpy(data.T)
+    else:
+        waveform, sr = torchaudio.load(source)  # [channels, frames]
+        if waveform.dtype != torch.float32:
+            waveform = waveform.to(torch.float32)
+
+    # ensure [channels, frames]
+    if waveform.dim() == 1:
+        waveform = waveform.unsqueeze(0)
+
+    # convert to mono
+    if waveform.size(0) > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+
+    # resample if needed
+    if sr != sample_rate:
+        waveform = torchaudio.transforms.Resample(sr, sample_rate)(waveform)
+
+    return waveform.squeeze(0)  # 1D tensor [frames]
 
 
 def save_audio(audio, audio_path, sample_rate):
@@ -52,29 +96,29 @@ def infer_stream(model, audio, chunk_factor, sr):
         if i == 0:
             front_ctx = torch.zeros(L * 2)
         else:
-            front_ctx = audio_chunks[i - 1][-L * 2:]
+            front_ctx = audio_chunks[i - 1][-L * 2 :]
         new_audio_chunks.append(torch.cat([front_ctx, a]))
     audio_chunks = new_audio_chunks
 
     outputs = []
     times = []
     with torch.inference_mode():
-        enc_buf, dec_buf, out_buf = model.init_buffers(
-            1, torch.device('cpu'))
-        if hasattr(model, 'convnet_pre'):
-            convnet_pre_ctx = model.convnet_pre.init_ctx_buf(
-                1, torch.device('cpu'))
+        enc_buf, dec_buf, out_buf = model.init_buffers(1, torch.device("cpu"))
+        if hasattr(model, "convnet_pre"):
+            convnet_pre_ctx = model.convnet_pre.init_ctx_buf(1, torch.device("cpu"))
         else:
             convnet_pre_ctx = None
         for chunk in audio_chunks:
+            # Process each audio chunk
             start = time.time()
-            output, \
-                enc_buf, dec_buf, out_buf, \
-                convnet_pre_ctx = model(chunk.unsqueeze(
-                    0).unsqueeze(0),
-                    enc_buf, dec_buf, out_buf,
-                    convnet_pre_ctx, pad=(not model.lookahead)
-                )
+            output, enc_buf, dec_buf, out_buf, convnet_pre_ctx = model(
+                chunk.unsqueeze(0).unsqueeze(0),
+                enc_buf,
+                dec_buf,
+                out_buf,
+                convnet_pre_ctx,
+                pad=(not model.lookahead),
+            )
             outputs.append(output)
             times.append(time.time() - start)
         # concatenate outputs
@@ -92,8 +136,7 @@ def infer_stream(model, audio, chunk_factor, sr):
 def do_infer(model, audio, chunk_factor, sr, stream):
     with torch.no_grad():
         if stream:
-            outputs, rtf, e2e_latency = infer_stream(
-                model, audio, chunk_factor, sr)
+            outputs, rtf, e2e_latency = infer_stream(model, audio, chunk_factor, sr)
             return outputs, rtf, e2e_latency
         else:
             outputs = infer(model, audio)
@@ -104,18 +147,44 @@ def do_infer(model, audio, chunk_factor, sr, stream):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint_path', '-p', type=str,
-                        default='llvc_models/models/checkpoints/llvc/G_500000.pth', help='Path to LLVC checkpoint file')
-    parser.add_argument('--config_path', '-c', type=str,
-                        default='experiments/llvc/config.json', help='Path to LLVC config file')
-    parser.add_argument('--fname', '-f', type=str,
-                        default='test_wavs', help='Path to audio file or directory of audio files to convert')
-    parser.add_argument('--out_dir', '-o', type=str,
-                        default='converted_out', help='Directory to save converted audio')
-    parser.add_argument('--chunk_factor', '-n', type=int,
-                        default=1, help='Chunk factor for streaming inference')
-    parser.add_argument('--stream', '-s', action='store_true',
-                        help='Use streaming inference')
+    parser.add_argument(
+        "--checkpoint_path",
+        "-p",
+        type=str,
+        default="llvc_models/models/checkpoints/llvc/G_500000.pth",
+        help="Path to LLVC checkpoint file",
+    )
+    parser.add_argument(
+        "--config_path",
+        "-c",
+        type=str,
+        default="experiments/llvc/config.json",
+        help="Path to LLVC config file",
+    )
+    parser.add_argument(
+        "--fname",
+        "-f",
+        type=str,
+        default="test_wavs",
+        help="Path to audio file or directory of audio files to convert",
+    )
+    parser.add_argument(
+        "--out_dir",
+        "-o",
+        type=str,
+        default="converted_out",
+        help="Directory to save converted audio",
+    )
+    parser.add_argument(
+        "--chunk_factor",
+        "-n",
+        type=int,
+        default=1,
+        help="Chunk factor for streaming inference",
+    )
+    parser.add_argument(
+        "--stream", "-s", action="store_true", help="Use streaming inference"
+    )
     args = parser.parse_args()
     model, sr = load_model(args.checkpoint_path, args.config_path)
     if not os.path.exists(args.out_dir):
@@ -129,7 +198,7 @@ def main():
         fnames = glob_audio_files(args.fname)
         e2e_times_list = []
         for fname in tqdm(fnames):
-            audio = load_audio(fname, sr)
+            audio = load_audio_full(fname, sr)
             out, rtf_, e2e_latency_ = do_infer(
                 model, audio, args.chunk_factor, sr, args.stream
             )
@@ -138,22 +207,25 @@ def main():
             out_fname = os.path.join(args.out_dir, os.path.basename(fname))
             save_audio(out, out_fname, sr)
         rtf = np.mean(rtf_list) if rtf_list[0] is not None else None
-        e2e_latency = np.mean(
-            e2e_times_list) if e2e_times_list[0] is not None else None
-        print(f"Saved outputs to {args.out_dir}")
+        e2e_latency = np.mean(e2e_times_list) if e2e_times_list[0] is not None else None
     else:
-        audio = load_audio(args.fname, sr)
+        audio = load_audio_full(args.fname, sr)
         out, rtf, e2e_latency = do_infer(
             model, audio, args.chunk_factor, sr, args.stream
         )
-        out_fname = os.path.join(
-            args.out_dir, os.path.basename(args.fname))
+        out_fname = os.path.join(args.out_dir, os.path.basename(args.fname))
         save_audio(out, out_fname, sr)
-        print(f"Saved output to {args.out_dir}")
-    if rtf is not None and e2e_latency is not None:
-        print(f"RTF: {rtf:.3f}")
+    print(
+        f"Saved outputs to {args.out_dir}, loaded audio using load_audio_full() with stream {args.stream}"
+    )
+    # if rtf is not None and e2e_latency is not None:
+    print(f"RTF: {rtf:.3f}") if rtf is not None else None
+    (
         print(f"End-to-end latency: {e2e_latency:.3f}ms")
+        if e2e_latency is not None
+        else None
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -9,7 +9,7 @@ numpy
 
 # I think these are the changes needed for minimal_rvc to run
 gradio==3.36.1
-faiss-cpu==1.7.3
+faiss-cpu
 pyworld==0.3.2
 soundfile==0.12.1
 ffmpeg-python==0.2.0
