@@ -4,33 +4,37 @@ import librosa
 
 if __name__ == "__main__":
     # Load an audio file with a target sample rate of 8000 Hz
-    directory = os.path.join(os.getcwd(), "../custom", "source")
-    all_files = [f for f in os.listdir(directory) if f.endswith(".wav")]
-    # print(all_files)
-    for file in all_files:
-        index = all_files.index(file)
-        y, sr = librosa.load(
-            os.path.join(directory, file), sr=16000
-        )  # Downsample 44.1kHz to 8kHz
-        print(f"File: {file}, Original SR: {sr}, New SR: 16000, Samples: {len(y)}")
-        parts = file.split("_", 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            number = int(parts[0])  # e.g. "12" from "12_might.wave"
-            rest = parts[1].replace(".wav", "")  # e.g. "might"
-        else:
-            number = index + 1
-            rest = file
+    directory = os.path.join(os.getcwd(), "../custom", "target")
+    all_files = [
+        f for f in os.listdir(directory) if f.lower().endswith((".wav", ".mp3"))
+    ]
+    datasets_dir = os.path.normpath(os.path.join(directory, "../datasets"))
+    os.makedirs(datasets_dir, exist_ok=True)
 
-        out_path = os.path.join(
-            directory,
-            "../datasets",
-            f"Speaker{number}_{rest.lower()}{number}_original.wav",
-        )
+    for index, file in enumerate(all_files):
+        src_path = os.path.join(directory, file)
+        # load and resample to 16000 Hz
+        y, sr = librosa.load(src_path, sr=16000)
+        print(f"File: {file}, Loaded SR: {sr}, New SR: 16000, Samples: {len(y)}")
+
+        name, ext = os.path.splitext(file)
+        # parts = name.split("_", 1)
+        # if len(parts) == 2 and parts[0].isdigit():
+        #     number = int(parts[0])
+        #     rest = parts[1]
+        # else:
+        #     number = index + 1
+        #     rest = name
+
+        # out_name = f"Speaker{number}_{rest.lower()}{number}_converted.wav"
+        out_path = os.path.join(datasets_dir, f"{name}.wav")
         sf.write(out_path, y, samplerate=16000)
-        # src_path = os.path.join(directory, file)
-        # if os.path.exists(src_path) and os.path.isfile(src_path):
+        print(f"Wrote: {out_path}")
+
+        # # If original was mp3, delete it after conversion
+        # if ext.lower() == ".mp3":
         #     try:
         #         os.remove(src_path)
-        #         print(f"Removed old file: {src_path}")
+        #         print(f"Deleted original mp3: {src_path}")
         #     except OSError as e:
-        #         print(f"Failed to remove {src_path}: {e}")
+        #         print(f"Failed to delete {src_path}: {e}")
