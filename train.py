@@ -14,6 +14,16 @@ from torch.cuda.amp import GradScaler, autocast
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
+try:
+    import argparse as _argparse  # ensure Namespace is available
+
+    torch.serialization.add_safe_globals([_argparse.Namespace])
+except Exception:
+    # older PyTorch may not have add_safe_globals; ignore in that case
+    pass
+
+print("v3 Updated me here..")
+
 from dataset import LLVCDataset as Dataset
 from model import Net
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -23,6 +33,30 @@ import fairseq
 os.environ["MASTER_ADDR"] = "localhost"
 os.environ["MASTER_PORT"] = "12355"
 # check if port is available
+
+# If torch >= 2.6 uses weights_only by default, some checkpoint objects (like
+# fairseq.data.dictionary.Dictionary) are blocked by the safe unpickler. Add
+# Fairseq types to torch's allowlist when available and after importing
+# fairseq so checkpoints containing those types can be loaded.
+try:
+    # Import Dictionary directly to ensure the class object is available even
+    # when fairseq uses lazy subpackage imports. Then add it to torch's safe
+    # globals so torch.load can unpickle checkpoints containing this class.
+    try:
+        from fairseq.data.dictionary import Dictionary
+
+        try:
+            torch.serialization.add_safe_globals([Dictionary])
+        except Exception:
+            # Older torch versions may not have add_safe_globals; ignore.
+            pass
+    except Exception:
+        # If import fails for any reason, continue without blocking startup.
+        pass
+except Exception:
+    # If anything goes wrong, don't block training startup; loading may still
+    # work for weights-only checkpoints or alternative code paths.
+    pass
 
 
 def net_g_step(batch, net_g, device, fp16_run):
@@ -173,7 +207,7 @@ def training_runner(
     cache = []
     loss_mel_avg = utils.RunningAvg()
     loss_fairseq_avg = utils.RunningAvg()
-    for epoch in range(epoch, 10000):
+    for epoch in range(epoch, config.get("max_epoch", 1000)):
         # train_loader.batch_sampler.set_epoch(epoch)
 
         net_g.train()
