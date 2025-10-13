@@ -87,16 +87,54 @@ def load_audio_full(source, sample_rate):
 
 
 def save_audio(audio, audio_path, sample_rate):
+    """
+    Save audio ensuring tensor is on CPU, float32, and shaped [channels, frames].
+    Accepts 1D tensors (frames,) or 2D [channels, frames], on CPU or GPU.
+    """
+    # If passed a torch tensor, move to CPU and convert dtype if needed
+    if isinstance(audio, torch.Tensor):
+        # detach from graph
+        audio = audio.detach()
+        # convert half->float
+        if audio.dtype == torch.float16:
+            audio = audio.float()
+        # move to CPU
+        if audio.device.type != "cpu":
+            audio = audio.to("cpu")
+        # ensure 2D [channels, frames]
+        if audio.dim() == 1:
+            audio = audio.unsqueeze(0)
+    else:
+        # try to convert numpy/sequence to tensor
+        audio = torch.from_numpy(np.asarray(audio))
+        if audio.dim() == 1:
+            audio = audio.unsqueeze(0)
+        audio = audio.to(torch.float32)
     torchaudio.save(audio_path, audio, sample_rate)
 
 
 def infer(model, audio):
+    # ensure audio is on the same device and dtype as the model
+    device = next(model.parameters()).device
+    param_dtype = next(model.parameters()).dtype
+    if param_dtype == torch.float16:
+        audio = audio.to(device).half()
+    else:
+        audio = audio.to(device).float()
     return model(audio.unsqueeze(0).unsqueeze(0)).squeeze(0)
 
 
 def infer_stream(model, audio, chunk_factor, sr):
     L = model.L
     chunk_len = model.dec_chunk_size * L * chunk_factor
+    # move audio and buffers to the model device and match dtype
+    device = next(model.parameters()).device
+    param_dtype = next(model.parameters()).dtype
+    # audio comes in as CPU float32; move and cast appropriately
+    if param_dtype == torch.float16:
+        audio = audio.to(device).half()
+    else:
+        audio = audio.to(device).float()
     # pad audio to be a multiple of L * dec_chunk_size
     original_len = len(audio)
     if len(audio) % chunk_len != 0:
@@ -104,13 +142,13 @@ def infer_stream(model, audio, chunk_factor, sr):
         audio = torch.nn.functional.pad(audio, (0, pad_len))
 
     # scoot audio down by L
-    audio = torch.cat((audio[L:], torch.zeros(L)))
+    audio = torch.cat((audio[L:], torch.zeros(L, device=device, dtype=audio.dtype)))
     audio_chunks = torch.split(audio, chunk_len)
     # add lookahead context from prev chunk
     new_audio_chunks = []
     for i, a in enumerate(audio_chunks):
         if i == 0:
-            front_ctx = torch.zeros(L * 2)
+            front_ctx = torch.zeros(L * 2, device=device, dtype=audio.dtype)
         else:
             front_ctx = audio_chunks[i - 1][-L * 2 :]
         new_audio_chunks.append(torch.cat([front_ctx, a]))
@@ -119,9 +157,10 @@ def infer_stream(model, audio, chunk_factor, sr):
     outputs = []
     times = []
     with torch.inference_mode():
-        enc_buf, dec_buf, out_buf = model.init_buffers(1, torch.device("cpu"))
+        # initialize buffers on the model device so kernel/dtype match
+        enc_buf, dec_buf, out_buf = model.init_buffers(1, device)
         if hasattr(model, "convnet_pre"):
-            convnet_pre_ctx = model.convnet_pre.init_ctx_buf(1, torch.device("cpu"))
+            convnet_pre_ctx = model.convnet_pre.init_ctx_buf(1, device)
         else:
             convnet_pre_ctx = None
         for chunk in audio_chunks:
