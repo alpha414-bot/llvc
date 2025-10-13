@@ -4,17 +4,21 @@ import librosa
 
 if __name__ == "__main__":
     # Load an audio file with a target sample rate of 8000 Hz
-    directory = os.path.join(os.getcwd(), "../custom", "target")
+    directory = os.path.join(os.getcwd(), "../custom", "datasets/val")
     all_files = [
         f for f in os.listdir(directory) if f.lower().endswith((".wav", ".mp3"))
     ]
-    datasets_dir = os.path.normpath(os.path.join(directory, "../datasets"))
+    print(f"Found {len(all_files)} audio files in {directory}")
+    datasets_dir = os.path.normpath(
+        os.path.join(f"{directory}", "../../llvc_dataset", "val")
+    )
     os.makedirs(datasets_dir, exist_ok=True)
 
     for index, file in enumerate(all_files):
         src_path = os.path.join(directory, file)
         # load and resample to 16000 Hz
-        y, sr = librosa.load(src_path, sr=16000)
+        # y, sr = librosa.load(src_path, sr=16000)
+        y, sr = librosa.load(src_path, sr=48000)
         print(f"File: {file}, Loaded SR: {sr}, New SR: 16000, Samples: {len(y)}")
 
         name, ext = os.path.splitext(file)
@@ -28,7 +32,7 @@ if __name__ == "__main__":
 
         # out_name = f"Speaker{number}_{rest.lower()}{number}_converted.wav"
         out_path = os.path.join(datasets_dir, f"{name}.wav")
-        sf.write(out_path, y, samplerate=16000)
+        sf.write(out_path, y, samplerate=48000, subtype="PCM_16")
         print(f"Wrote: {out_path}")
 
         # # If original was mp3, delete it after conversion

@@ -28,8 +28,8 @@ except Exception:
         if data.ndim == 1:
             channels = 1
         else:
-            channels = data.shape[1]
-        duration = data.shape[0] / sr
+            channels = data.shape[1] if len(data.shape) > 1 else 0
+        duration = (data.shape[0] if len(data.shape) > 0 else 0) / sr
         return sr, channels, duration
 
 
