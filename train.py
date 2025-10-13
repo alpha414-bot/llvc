@@ -1,4 +1,16 @@
-import torch
+# Colab: set before importing torch
+import os
+
+# Option A — avoid fragmentation (recommended to try first)
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
+
+# Option B — alternate: only set max split size (use if you prefer)
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+
+# Restart the runtime immediately after changing this cell's value for it to take effect.
+# You can call: Runtime -> Restart runtime in the Colab menu.
+print("Set PYTORCH_CUDA_ALLOC_CONF:", os.environ["PYTORCH_CUDA_ALLOC_CONF"])
+import gc, torch
 import os
 import logging
 import random
@@ -13,6 +25,13 @@ import torch.nn.functional as F
 from torch.cuda.amp import GradScaler, autocast
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
+
+gc.collect()
+torch.cuda.empty_cache()
+
+# optionally print allocated/reserved
+print("torch.cuda.memory_allocated():", torch.cuda.memory_allocated() / 1024**2, "MiB")
+print("torch.cuda.memory_reserved():", torch.cuda.memory_reserved() / 1024**2, "MiB")
 
 try:
     import argparse as _argparse  # ensure Namespace is available
