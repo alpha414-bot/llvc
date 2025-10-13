@@ -14,12 +14,27 @@ from tqdm import tqdm
 import soundfile as sf
 import io
 
+# Ensure higher-quality resampling (use sox_io if available)
+try:
+    torchaudio.set_audio_backend("sox_io")
+except Exception:
+    pass
 
-def load_model(checkpoint_path, config_path):
+def load_model(checkpoint_path, config_path, device=None):
     with open(config_path) as f:
         config = json.load(f)
     model = Net(**config["model_params"])
-    model.load_state_dict(torch.load(checkpoint_path, map_location="cpu")["model"])
+    state = torch.load(checkpoint_path, map_location="cpu")
+    # support checkpoints that either store dict with "model" key or raw state_dict
+    model_state = state.get("model", state) if isinstance(state, dict) else state
+    model.load_state_dict(model_state)
+    model.eval()
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    fp16 = config.get("fp16_run", False) if "fp16_run" in config else False 
+    if fp16 and device.type == "cuda":
+        model.half()
     return model, config["data"]["sr"]
 
 
@@ -63,10 +78,11 @@ def load_audio_full(source, sample_rate):
     if waveform.size(0) > 1:
         waveform = waveform.mean(dim=0, keepdim=True)
 
-    # resample if needed
+    # resample if needed (sox_io backend used above for better quality if available)
     if sr != sample_rate:
         waveform = torchaudio.transforms.Resample(sr, sample_rate)(waveform)
 
+    waveform = waveform.to(torch.float32)
     return waveform.squeeze(0)  # 1D tensor [frames]
 
 
@@ -186,7 +202,8 @@ def main():
         "--stream", "-s", action="store_true", help="Use streaming inference"
     )
     args = parser.parse_args()
-    model, sr = load_model(args.checkpoint_path, args.config_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model, sr = load_model(args.checkpoint_path, args.config_path, device=device)
     if not os.path.exists(args.out_dir):
         os.mkdir(args.out_dir)
     # check if fname is a directory

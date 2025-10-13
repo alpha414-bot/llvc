@@ -41,7 +41,7 @@ except Exception:
     # older PyTorch may not have add_safe_globals; ignore in that case
     pass
 
-print("v3 Updated me here..")
+print("v5 Updated me here..")
 
 from dataset import LLVCDataset as Dataset
 from model import Net
@@ -396,11 +396,20 @@ def training_runner(
                 ]
 
                 logging.info("Testing...")
+                # run inference without grad and with AMP if enabled to avoid allocating training GPU memory
                 for test_wav_name, test_wav in tqdm(test_wavs, total=len(test_wavs)):
-                    test_out = net_g(test_wav.unsqueeze(0).unsqueeze(0).to(device))
-                    audio_dict.update(
-                        {f"test_audio/{test_wav_name}": test_out[0].data.cpu().numpy()}
-                    )
+                    with torch.no_grad():
+                        with autocast(enabled=config["fp16_run"]):
+                            inp = test_wav.unsqueeze(0).unsqueeze(0).to(device, non_blocking=True)
+                            test_out = net_g(inp)
+                        # move immediately to CPU / numpy and free GPU memory
+                        audio_dict.update(
+                            {f"test_audio/{test_wav_name}": test_out[0].detach().cpu().numpy()}
+                        )
+                    # free temp tensors ASAP
+                    del inp, test_out
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
                 # don't worry about caching val dataset for now
                 for loader in [dev_loader, val_loader]:

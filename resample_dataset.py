@@ -4,13 +4,13 @@ import librosa
 
 if __name__ == "__main__":
     # Load an audio file with a target sample rate of 8000 Hz
-    directory = os.path.join(os.getcwd(), "../custom", "datasets/val")
+    directory = os.path.join(os.getcwd(), "test_wavs")
     all_files = [
         f for f in os.listdir(directory) if f.lower().endswith((".wav", ".mp3"))
     ]
     print(f"Found {len(all_files)} audio files in {directory}")
     datasets_dir = os.path.normpath(
-        os.path.join(f"{directory}", "../../llvc_dataset", "val")
+        os.path.join(f"{directory}", "test_wavs_resample")
     )
     os.makedirs(datasets_dir, exist_ok=True)
 

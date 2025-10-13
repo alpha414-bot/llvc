@@ -4,6 +4,7 @@ f_8312_ls360/*
 LibriSpeech/*
 
 converted_out_samarix*
+*.wav
 
 chat.json
 llvc_models/
